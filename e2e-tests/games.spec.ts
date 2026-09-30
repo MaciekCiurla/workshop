@@ -36,6 +36,84 @@ test.describe('Game Listing and Navigation', () => {
     }
   });
 
+  test('should filter games by multiple categories and publisher and clear the filters', async ({ page }) => {
+    await page.goto('/');
+
+    const gameCards = page.getByTestId('game-card');
+    const categoryFilters = page.getByTestId('category-filter');
+    const publisherFilter = page.getByTestId('publisher-filter');
+    const resultsCount = page.getByTestId('filter-results-count');
+    const initialCount = await gameCards.count();
+    const selectedCategoryIds = [
+      await categoryFilters.nth(0).getAttribute('value'),
+      await categoryFilters.nth(1).getAttribute('value'),
+    ];
+
+    await test.step('Select multiple categories and verify they combine as alternatives', async () => {
+      await categoryFilters.nth(0).check();
+      await categoryFilters.nth(1).check();
+
+      const expectedCount = await gameCards.evaluateAll((cards, categoryIds) =>
+        cards.filter((card) => categoryIds.includes(card.getAttribute('data-game-category-id') ?? '')).length,
+      selectedCategoryIds);
+      await expect(page.locator('[data-testid="game-card"]:visible')).toHaveCount(expectedCount);
+      await expect(resultsCount).toHaveText(`Showing ${expectedCount} of ${initialCount} games`);
+    });
+
+    await test.step('Combine the category selection with a publisher filter', async () => {
+      await publisherFilter.selectOption({ index: 1 });
+
+      const publisherId = await publisherFilter.inputValue();
+      const expectedCount = await gameCards.evaluateAll((cards, filters) =>
+        cards.filter((card) =>
+          filters.categoryIds.includes(card.getAttribute('data-game-category-id') ?? '') &&
+          card.getAttribute('data-game-publisher-id') === filters.publisherId,
+        ).length,
+      { categoryIds: selectedCategoryIds, publisherId });
+      await expect(page.locator('[data-testid="game-card"]:visible')).toHaveCount(expectedCount);
+      await expect(resultsCount).toHaveText(
+        expectedCount === 0 ? 'No games match the selected filters.' : `Showing ${expectedCount} of ${initialCount} games`,
+      );
+    });
+
+    await test.step('Clear all filters and restore every game card', async () => {
+      await page.getByTestId('clear-game-filters').click();
+      await expect(page.locator('[data-testid="game-card"]:visible')).toHaveCount(initialCount);
+      await expect(resultsCount).toHaveText(`Showing ${initialCount} of ${initialCount} games`);
+    });
+  });
+
+  test('should expose accessible filter controls with keyboard operation and visible focus', async ({ page }) => {
+    await page.goto('/');
+
+    const filters = page.getByRole('region', { name: 'Filter games' });
+    const categories = filters.getByRole('group', { name: 'Categories' });
+    const actionCategory = categories.getByRole('checkbox', { name: 'Action' });
+    const publisher = filters.getByRole('combobox', { name: 'Publisher' });
+    const clearButton = filters.getByRole('button', { name: 'Clear filters' });
+    const resultStatus = page.getByRole('status');
+
+    await expect(categories).toBeVisible();
+    await expect(actionCategory).toHaveAttribute('data-testid', 'category-filter');
+    await expect(publisher).toHaveAttribute('data-testid', 'publisher-filter');
+    await expect(clearButton).toHaveAttribute('data-testid', 'clear-game-filters');
+    await expect(resultStatus).toHaveAttribute('aria-live', 'polite');
+
+    await test.step('Use the category checkbox from the keyboard and verify focus visibility', async () => {
+      await actionCategory.focus();
+      await expect(actionCategory).toBeFocused();
+      await expect
+        .poll(() => actionCategory.evaluate((input) => getComputedStyle(input).boxShadow))
+        .not.toBe('none');
+
+      await actionCategory.press('Space');
+
+      await expect(actionCategory).toBeChecked();
+      await expect(page.locator('[data-testid="game-card"]:visible')).toHaveCount(5);
+      await expect(resultStatus).toHaveText('Showing 5 of 21 games');
+    });
+  });
+
   test('should navigate to correct game details page when clicking on a game', async ({ page }) => {
     let gameId: string | null;
     let gameTitle: string | null;
